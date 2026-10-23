@@ -265,6 +265,7 @@ if (logoutBtn) {
         if (supabaseClient) {
             await supabaseClient.auth.signOut();
         }
+        showAnalyticsView(false);
         showLogin();
     });
 }
@@ -425,6 +426,7 @@ async function keywordSearch() {
         if (error) throw new Error(`Search failed: ${error.message}`);
 
         if (!data || data.length === 0) {
+            logSearch('keyword', query, []);
             showResults('keyword', '<div class="no-results">No results found. Try different keywords.</div>');
             return;
         }
@@ -443,6 +445,7 @@ async function keywordSearch() {
             }
             talks[talkId].sentences.push(highlightKeyword(row.text, query));
         }
+        logSearch('keyword', query, Object.keys(talks).map(talkId => ({ talk_id: talkId })));
 
         let html = '';
         for (const talk of Object.values(talks)) {
@@ -486,9 +489,19 @@ async function semanticSearch() {
         const results = await searchSentences(embedding);
 
         if (!results || results.length === 0) {
+            logSearch('semantic', query, []);
             showResults('semantic', '<div class="no-results">No similar content found. Try a different query.</div>');
             return;
         }
+
+        // Results are sorted by similarity, so the first sentence seen per talk is its best match
+        const seenTalks = new Map();
+        for (const result of results) {
+            if (!seenTalks.has(result.talk_id)) {
+                seenTalks.set(result.talk_id, { talk_id: result.talk_id, similarity: result.similarity });
+            }
+        }
+        logSearch('semantic', query, [...seenTalks.values()]);
 
         // Step 3: Display results with similarity badges
         let html = '';
@@ -541,6 +554,7 @@ async function askQuestion() {
 
         // Step 5: Generate answer with full context
         const answer = await generateAnswer(question, enrichedTalks);
+        logSearch('rag', question, topTalks.map(t => ({ talk_id: t.talk_id, similarity: t.avgSimilarity })));
 
         // Compute overall similarity (weighted avg across source talks)
         const overallSimilarity = topTalks.reduce((sum, t) => sum + t.avgSimilarity, 0) / topTalks.length;
@@ -750,6 +764,258 @@ if (semanticInput) semanticInput.addEventListener('keypress', (e) => {
 if (ragBtn) ragBtn.addEventListener('click', askQuestion);
 if (ragInput) ragInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') askQuestion();
+});
+
+// ============================================
+// SEARCH ANALYTICS (custom feature)
+// ============================================
+// Every search is logged to search_logs (RLS: users insert/read only their own rows).
+// The dashboard reads aggregates from get_search_analytics(), a SECURITY DEFINER
+// function that counts everyone's searches but never returns who ran them.
+
+const analyticsToggleBtn = document.getElementById('analytics-toggle-btn');
+const analyticsView = document.getElementById('analytics-view');
+const searchPanelsEl = document.querySelector('.search-panels');
+const analyticsRefreshBtn = document.getElementById('analytics-refresh-btn');
+const analyticsError = document.getElementById('analytics-error');
+
+const analyticsState = { days: 30, scope: 'all', loading: false, reloadQueued: false };
+
+// Best-effort: a failed log must never break the search itself
+function logSearch(searchType, query, matchedTalks) {
+    if (!supabaseClient) return;
+    supabaseClient
+        .from('search_logs')
+        .insert({
+            search_type: searchType,
+            query: query.slice(0, 500),
+            matched_talks: matchedTalks.slice(0, 20).map(t => ({
+                talk_id: t.talk_id,
+                similarity: typeof t.similarity === 'number' ? Number(t.similarity.toFixed(4)) : null
+            }))
+        })
+        .then(({ error }) => {
+            if (error) console.warn('Search log failed:', error.message);
+        });
+}
+
+function showAnalyticsView(show) {
+    if (!analyticsView || !searchPanelsEl) return;
+    analyticsView.classList.toggle('hidden', !show);
+    searchPanelsEl.classList.toggle('hidden', show);
+    if (analyticsToggleBtn) {
+        analyticsToggleBtn.textContent = show ? '🔍 Search' : '📊 Analytics';
+        analyticsToggleBtn.setAttribute('aria-pressed', String(show));
+    }
+    if (show) loadAnalytics();
+}
+
+async function loadAnalytics() {
+    if (!supabaseClient) return;
+    // A filter clicked mid-load re-runs once the current load finishes
+    if (analyticsState.loading) {
+        analyticsState.reloadQueued = true;
+        return;
+    }
+    analyticsState.loading = true;
+    analyticsView.classList.add('analytics-loading');
+    analyticsError.classList.add('hidden');
+
+    try {
+        const { data, error } = await supabaseClient.rpc('get_search_analytics', {
+            p_days: analyticsState.days,
+            p_only_mine: analyticsState.scope === 'mine',
+            p_limit: 10
+        });
+        if (error) throw new Error(error.message);
+        renderAnalytics(data);
+    } catch (err) {
+        analyticsError.textContent = `Couldn't load analytics: ${err.message}`;
+        analyticsError.classList.remove('hidden');
+    } finally {
+        analyticsState.loading = false;
+        analyticsView.classList.remove('analytics-loading');
+        if (analyticsState.reloadQueued) {
+            analyticsState.reloadQueued = false;
+            loadAnalytics();
+        }
+    }
+}
+
+function renderAnalytics(data) {
+    renderStatTiles(data.summary);
+    renderActivityChart(data.daily);
+    renderPopularQuestions(data.popular_questions);
+    renderTopTalks(data.top_talks);
+}
+
+function renderStatTiles(summary) {
+    const tiles = [
+        { label: 'Total searches', value: summary.total_searches },
+        { label: 'Unique questions', value: summary.unique_questions },
+        { label: analyticsState.scope === 'mine' ? 'Users (just you)' : 'Active users', value: summary.active_users },
+        { label: '🔍 Keyword', value: summary.keyword },
+        { label: '🧠 Semantic', value: summary.semantic },
+        { label: '🤖 RAG', value: summary.rag }
+    ];
+    document.getElementById('analytics-tiles').innerHTML = tiles.map(t => `
+        <div class="stat-tile">
+            <div class="stat-value">${Number(t.value).toLocaleString()}</div>
+            <div class="stat-label">${t.label}</div>
+        </div>`).join('');
+}
+
+function formatDay(isoDay, opts = { month: 'short', day: 'numeric' }) {
+    // Parse YYYY-MM-DD as a local date so it doesn't shift a day in US time zones
+    const [y, m, d] = isoDay.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, opts);
+}
+
+function renderActivityChart(daily) {
+    const chart = document.getElementById('activity-chart');
+    const note = document.getElementById('activity-note');
+    const total = daily.reduce((sum, d) => sum + d.searches, 0);
+    const max = Math.max(1, ...daily.map(d => d.searches));
+
+    note.textContent = daily.length
+        ? `${formatDay(daily[0].day)} – ${formatDay(daily[daily.length - 1].day)} (UTC days)`
+        : '';
+    chart.setAttribute('aria-label',
+        `Bar chart of searches per day: ${total} searches over ${daily.length} days, peak ${max} in one day.`);
+
+    if (total === 0) {
+        chart.innerHTML = '<div class="no-results">No searches in this range yet. Run a search and come back!</div>';
+        return;
+    }
+
+    const bars = daily.map(d => {
+        const pct = (d.searches / max) * 100;
+        const label = `${formatDay(d.day, { weekday: 'short', month: 'short', day: 'numeric' })}: ${d.searches} search${d.searches === 1 ? '' : 'es'}`;
+        return `<div class="activity-bar-slot" tabindex="0" data-tip="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">
+            <div class="activity-bar${d.searches === 0 ? ' empty' : ''}" style="height:${d.searches === 0 ? 0 : Math.max(pct, 3)}%"></div>
+        </div>`;
+    }).join('');
+
+    const mid = daily[Math.floor(daily.length / 2)];
+    chart.innerHTML = `
+        <div class="activity-plot">
+            <div class="activity-axis-y"><span>${max}</span><span>0</span></div>
+            <div class="activity-bars">${bars}<div class="activity-tooltip hidden"></div></div>
+        </div>
+        <div class="activity-axis-x">
+            <span>${formatDay(daily[0].day)}</span>
+            <span>${daily.length > 2 ? formatDay(mid.day) : ''}</span>
+            <span>${formatDay(daily[daily.length - 1].day)}</span>
+        </div>`;
+
+    // One shared tooltip, shown on hover or keyboard focus
+    const barsEl = chart.querySelector('.activity-bars');
+    const tooltip = chart.querySelector('.activity-tooltip');
+    const showTip = (slot) => {
+        tooltip.textContent = slot.dataset.tip;
+        tooltip.classList.remove('hidden');
+        const slotBox = slot.getBoundingClientRect();
+        const barsBox = barsEl.getBoundingClientRect();
+        const center = slotBox.left - barsBox.left + slotBox.width / 2;
+        const half = tooltip.offsetWidth / 2;
+        tooltip.style.left = `${Math.min(Math.max(center, half), barsBox.width - half)}px`;
+    };
+    barsEl.querySelectorAll('.activity-bar-slot').forEach(slot => {
+        slot.addEventListener('mouseenter', () => showTip(slot));
+        slot.addEventListener('focus', () => showTip(slot));
+    });
+    barsEl.addEventListener('mouseleave', () => tooltip.classList.add('hidden'));
+    barsEl.addEventListener('focusout', () => tooltip.classList.add('hidden'));
+}
+
+function relativeTime(iso) {
+    const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.round(hours / 24)}d ago`;
+}
+
+// Scraped speaker names look like "By Elder X" with non-breaking spaces
+function cleanSpeaker(speaker) {
+    return (speaker || 'Unknown Speaker').replace(/ /g, ' ').replace(/^By\s+/i, '');
+}
+
+const SEARCH_TYPE_LABELS = { keyword: '🔍 Keyword', semantic: '🧠 Semantic', rag: '🤖 RAG' };
+
+function renderPopularQuestions(questions) {
+    const list = document.getElementById('popular-questions');
+    if (!questions.length) {
+        list.innerHTML = '<li class="no-results">No questions yet.</li>';
+        return;
+    }
+    const max = questions[0].times_asked;
+    list.innerHTML = questions.map(q => `
+        <li class="rank-item">
+            <button class="rank-row rank-row-button" data-question="${escapeHtml(q.question)}" title="Ask this question again">
+                <span class="rank-main">
+                    <span class="rank-title">${escapeHtml(q.question)}</span>
+                    <span class="rank-meta">
+                        ${q.search_types.map(t => `<span class="mode-chip">${SEARCH_TYPE_LABELS[t] || escapeHtml(t)}</span>`).join('')}
+                        <span>${relativeTime(q.last_asked)}</span>
+                        ${analyticsState.scope === 'all' && q.users > 1 ? `<span>${q.users} people</span>` : ''}
+                    </span>
+                </span>
+                <span class="rank-count">${q.times_asked}×</span>
+            </button>
+            <div class="rank-bar" style="width:${(q.times_asked / max) * 100}%"></div>
+        </li>`).join('');
+
+    list.querySelectorAll('.rank-row-button').forEach(btn => {
+        btn.addEventListener('click', () => {
+            showAnalyticsView(false);
+            if (ragInput && !ragInput.disabled) {
+                ragInput.value = btn.dataset.question;
+                ragInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                ragInput.focus();
+            }
+        });
+    });
+}
+
+function renderTopTalks(talks) {
+    const list = document.getElementById('top-talks');
+    if (!talks.length) {
+        list.innerHTML = '<li class="no-results">No matched talks yet.</li>';
+        return;
+    }
+    const max = talks[0].times_matched;
+    list.innerHTML = talks.map(t => `
+        <li class="rank-item">
+            <div class="rank-row">
+                <span class="rank-main">
+                    <a href="${escapeHtml(t.url)}" target="_blank" rel="noopener" class="rank-title result-title-link">${escapeHtml(t.title)}</a>
+                    <span class="rank-meta">
+                        <span>${escapeHtml(cleanSpeaker(t.speaker))}</span>
+                        ${t.times_top ? `<span>#1 result ${t.times_top}×</span>` : ''}
+                        ${t.avg_similarity != null ? `<span>avg match ${similarityBadge(t.avg_similarity)}</span>` : ''}
+                    </span>
+                </span>
+                <span class="rank-count">${t.times_matched}×</span>
+            </div>
+            <div class="rank-bar" style="width:${(t.times_matched / max) * 100}%"></div>
+        </li>`).join('');
+}
+
+if (analyticsToggleBtn) analyticsToggleBtn.addEventListener('click', () => {
+    showAnalyticsView(analyticsView.classList.contains('hidden'));
+});
+if (analyticsRefreshBtn) analyticsRefreshBtn.addEventListener('click', loadAnalytics);
+
+document.querySelectorAll('.analytics-filters .segmented-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        btn.parentElement.querySelectorAll('.segmented-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        if (btn.dataset.days !== undefined) analyticsState.days = Number(btn.dataset.days);
+        if (btn.dataset.scope !== undefined) analyticsState.scope = btn.dataset.scope;
+        loadAnalytics();
+    });
 });
 
 // ============================================

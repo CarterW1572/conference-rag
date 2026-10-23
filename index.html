@@ -78,6 +78,7 @@
         <nav class="navbar">
             <h2>Conference Q&A</h2>
             <div class="user-info">
+                <button id="analytics-toggle-btn" class="btn-secondary" aria-pressed="false">📊 Analytics</button>
                 <span id="user-email"></span>
                 <button id="logout-btn" class="btn-secondary">Logout</button>
             </div>
@@ -133,6 +134,57 @@
                     <div class="search-results" id="rag-results"></div>
                 </div>
             </div>
+
+            <!-- Analytics Dashboard (custom feature) -->
+            <section id="analytics-view" class="analytics-view hidden" aria-labelledby="analytics-heading">
+                <div class="analytics-header">
+                    <div>
+                        <h3 id="analytics-heading">📊 Search Analytics</h3>
+                        <p class="panel-description">Popular questions and the talks that searches match most often.</p>
+                    </div>
+                    <div class="analytics-filters">
+                        <div class="segmented" role="group" aria-label="Time range">
+                            <button class="segmented-btn" data-days="7">7 days</button>
+                            <button class="segmented-btn active" data-days="30">30 days</button>
+                            <button class="segmented-btn" data-days="0">All time</button>
+                        </div>
+                        <div class="segmented" role="group" aria-label="Whose searches">
+                            <button class="segmented-btn active" data-scope="all">Everyone</button>
+                            <button class="segmented-btn" data-scope="mine">Just me</button>
+                        </div>
+                        <button id="analytics-refresh-btn" class="btn-secondary" title="Refresh">↻</button>
+                    </div>
+                </div>
+
+                <div id="analytics-error" class="result-error hidden"></div>
+
+                <div class="stat-tiles" id="analytics-tiles"></div>
+
+                <div class="analytics-card">
+                    <div class="analytics-card-header">
+                        <h4>Searches per day</h4>
+                        <span class="analytics-card-note" id="activity-note"></span>
+                    </div>
+                    <div class="activity-chart" id="activity-chart" role="img"></div>
+                </div>
+
+                <div class="analytics-grid">
+                    <div class="analytics-card">
+                        <div class="analytics-card-header">
+                            <h4>Popular questions</h4>
+                            <span class="analytics-card-note">Click one to ask it again</span>
+                        </div>
+                        <ol class="rank-list" id="popular-questions"></ol>
+                    </div>
+                    <div class="analytics-card">
+                        <div class="analytics-card-header">
+                            <h4>Most-matched talks</h4>
+                            <span class="analytics-card-note">Across all search modes</span>
+                        </div>
+                        <ol class="rank-list" id="top-talks"></ol>
+                    </div>
+                </div>
+            </section>
         </div>
     </div>
 

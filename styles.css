@@ -730,6 +730,361 @@ input:focus {
 }
 
 /* ============================================
+   SEARCH ANALYTICS DASHBOARD (custom feature)
+   ============================================ */
+
+.analytics-view {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    padding: var(--spacing-lg) 0;
+    transition: opacity 0.2s ease;
+}
+
+.analytics-view.analytics-loading {
+    opacity: 0.6;
+}
+
+.analytics-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+}
+
+.analytics-header h3 {
+    font-size: 1.25rem;
+    margin-bottom: 0.25rem;
+}
+
+.analytics-header .panel-description {
+    margin-bottom: 0;
+}
+
+.analytics-filters {
+    display: flex;
+    gap: var(--spacing-xs);
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.analytics-filters .btn-secondary {
+    padding: 0.4rem 0.8rem;
+}
+
+.segmented {
+    display: inline-flex;
+    background: var(--background);
+    border: 1px solid var(--surface-light);
+    border-radius: 999px;
+    padding: 2px;
+}
+
+.segmented-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 500;
+    padding: 0.35rem 0.85rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.segmented-btn:hover {
+    color: var(--text);
+}
+
+.segmented-btn.active {
+    background: var(--surface-light);
+    color: var(--text);
+}
+
+.segmented-btn:focus-visible,
+.rank-row-button:focus-visible,
+.activity-bar-slot:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+/* Stat tiles */
+/* 6 across on wide screens, 3 + 3 (overview / per-mode) on medium, 2 on phones */
+.stat-tiles {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: var(--spacing-sm);
+}
+
+@media (max-width: 1000px) {
+    .stat-tiles {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 480px) {
+    .stat-tiles {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.stat-tile {
+    background: var(--surface);
+    border: 1px solid var(--surface-light);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+}
+
+.stat-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+/* Cards */
+.analytics-card {
+    background: var(--surface);
+    border: 1px solid var(--surface-light);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-md);
+    min-width: 0;
+}
+
+.analytics-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+.analytics-card-header h4 {
+    font-size: 1rem;
+}
+
+.analytics-card-note {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.analytics-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--spacing-md);
+}
+
+/* Activity bar chart (single series, so no legend) */
+.activity-plot {
+    display: flex;
+    gap: var(--spacing-xs);
+    height: 160px;
+}
+
+.activity-axis-y {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-align: right;
+    min-width: 1.5rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.activity-bars {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    border-bottom: 1px solid var(--surface-light);
+    /* Recessive gridlines at the top and middle */
+    background: linear-gradient(to bottom, var(--surface-light) 1px, transparent 1px) top / 100% 50% repeat-y;
+}
+
+.activity-bar-slot {
+    flex: 1;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    cursor: default;
+    border-radius: 4px 4px 0 0;
+}
+
+.activity-bar-slot:hover {
+    background: rgba(148, 163, 184, 0.08);
+}
+
+.activity-bar {
+    width: 100%;
+    background: var(--primary);
+    border-radius: 4px 4px 0 0;
+}
+
+.activity-bar-slot:hover .activity-bar,
+.activity-bar-slot:focus-visible .activity-bar {
+    background: var(--primary-dark);
+}
+
+.activity-tooltip {
+    position: absolute;
+    top: -0.25rem;
+    transform: translate(-50%, -100%);
+    background: var(--background);
+    border: 1px solid var(--surface-light);
+    color: var(--text);
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: var(--shadow-lg);
+    z-index: 2;
+}
+
+.activity-axis-x {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+    padding-left: calc(1.5rem + var(--spacing-xs));
+}
+
+/* Ranked lists */
+.rank-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.rank-item {
+    position: relative;
+    border-radius: var(--radius-md);
+    background: var(--background);
+    overflow: hidden;
+}
+
+/* Thin magnitude bar along the bottom edge, relative to the #1 item */
+.rank-bar {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 3px;
+    background: var(--primary);
+    border-radius: 0 4px 4px 0;
+    opacity: 0.7;
+}
+
+.rank-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+    width: 100%;
+    padding: 0.6rem 0.8rem;
+    text-align: left;
+}
+
+.rank-row-button {
+    background: transparent;
+    border: none;
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    cursor: pointer;
+    border-radius: var(--radius-md);
+}
+
+.rank-row-button:hover {
+    background: rgba(148, 163, 184, 0.08);
+}
+
+.rank-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+}
+
+.rank-title {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+a.rank-title {
+    color: var(--primary);
+}
+
+.rank-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.6rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.rank-count {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    flex-shrink: 0;
+}
+
+.mode-chip {
+    background: var(--surface-light);
+    border-radius: 999px;
+    padding: 0 0.5rem;
+    color: var(--text);
+}
+
+.rank-meta .similarity-badge {
+    font-size: 0.65rem;
+    padding: 0.05rem 0.45rem;
+}
+
+#analytics-toggle-btn {
+    white-space: nowrap;
+}
+
+@media (max-width: 800px) {
+    .analytics-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Three items in the navbar on phones: email on its own row, buttons below */
+@media (max-width: 640px) {
+    .user-info {
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: var(--spacing-xs) var(--spacing-sm);
+    }
+
+    #user-email {
+        order: -1;
+        flex-basis: 100%;
+        text-align: center;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+}
+
+/* ============================================
    RESPONSIVE DESIGN
    ============================================ */
 
