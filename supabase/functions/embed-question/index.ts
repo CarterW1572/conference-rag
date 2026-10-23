@@ -5,7 +5,7 @@
 // Request:  POST { "question": "..." }  with the user's Authorization: Bearer <jwt>
 // Response: { "embedding": [ ...1536 numbers ] }
 
-import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { requireUser } from '../_shared/auth.ts';
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts';
 
 const EMBEDDING_MODEL = 'text-embedding-3-small';
@@ -23,21 +23,8 @@ Deno.serve(async (req) => {
 
   // --- Verify the user is logged in ---
   // We deploy with --no-verify-jwt, so we check the token ourselves.
-  // getUser() asks Supabase Auth to validate the JWT, so a forged or expired token is rejected.
-  const authHeader = req.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) {
-    return jsonResponse({ error: 'Missing Authorization header' }, 401);
-  }
-
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_ANON_KEY')!,
-  );
-  const token = authHeader.replace('Bearer ', '');
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-  if (authError || !user) {
-    return jsonResponse({ error: 'Not authenticated' }, 401);
-  }
+  const user = await requireUser(req);
+  if (user instanceof Response) return user;
 
   // --- Validate input ---
   let question: unknown;
