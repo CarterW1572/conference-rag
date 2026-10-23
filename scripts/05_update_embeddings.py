@@ -15,7 +15,7 @@ Input:
 
 Prerequisites:
     - config.public.json with Supabase URL and anon key
-    - config.secret.json with Supabase service key
+    - config.secret.json with Supabase service key, access token, and project ref
     - Database schema created (Step 1)
     - Embeddings generated (Step 4)
 """
@@ -25,12 +25,14 @@ import os
 import sys
 import time
 
+import requests
 from supabase import create_client
 from tqdm import tqdm
 
 
 INPUT_FILE = os.path.join('scripts', 'output', 'sentences_with_embeddings.json')
 BATCH_SIZE = 100
+MAX_RETRIES = 5
 
 
 def load_config():
@@ -69,18 +71,22 @@ def main():
     print("Replacing database contents (truncate + re-import)")
     print("=" * 60)
 
-    try:
-        result = client.table('sentence_embeddings').select('id', count='exact').limit(1).execute()
-        existing_count = result.count or 0
-        if existing_count > 0:
-            print(f"   Truncating {existing_count:,} existing rows...")
-            client.table('sentence_embeddings').delete().neq('id', '00000000-0000-0000-0000-000000000000').execute()
-            print("   ✅ Table truncated.")
-        else:
-            print("   Table is empty — ready for import.")
-    except Exception as e:
-        print(f"   ⚠️ Could not check existing data: {e}")
-        print("   Proceeding with import anyway...")
+    # Use SQL TRUNCATE via the Management API — a row-by-row DELETE through the
+    # REST API hits the statement timeout once the table holds embeddings,
+    # which would leave old rows behind and duplicate everything.
+    url = f"https://api.supabase.com/v1/projects/{secrets['SUPABASE_PROJECT_REF']}/database/query"
+    headers = {
+        "Authorization": f"Bearer {secrets['SUPABASE_ACCESS_TOKEN']}",
+        "Content-Type": "application/json"
+    }
+    resp = requests.post(url, headers=headers, json={"query": "TRUNCATE TABLE sentence_embeddings;"})
+    if resp.status_code in (200, 201):
+        print("   ✅ Table truncated.")
+    else:
+        print(f"   ❌ Could not truncate table: {resp.status_code}")
+        print(resp.text[:500])
+        print("   Aborting so the import doesn't create duplicate rows.")
+        sys.exit(1)
 
     # Batch import (much faster than individual updates!)
     print(f"\n   Importing {len(records):,} records in batches of {BATCH_SIZE}...\n")
@@ -90,12 +96,18 @@ def main():
 
     for i in tqdm(range(0, len(records), BATCH_SIZE), desc="Importing"):
         batch = records[i:i + BATCH_SIZE]
-        try:
-            client.table('sentence_embeddings').insert(batch).execute()
-            success += len(batch)
-        except Exception as e:
-            print(f"\nError at batch {i // BATCH_SIZE}: {e}")
-            errors += len(batch)
+        # Retry with backoff — large vector inserts sometimes hit transient timeouts
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                client.table('sentence_embeddings').insert(batch).execute()
+                success += len(batch)
+                break
+            except Exception as e:
+                if attempt == MAX_RETRIES:
+                    print(f"\nError at batch {i // BATCH_SIZE} (gave up after {MAX_RETRIES} attempts): {e}")
+                    errors += len(batch)
+                else:
+                    time.sleep(2 ** attempt)
         time.sleep(0.1)
 
     print(f"\n✅ Import complete!")
@@ -109,7 +121,7 @@ def main():
 
     embedded_result = client.table('sentence_embeddings') \
         .select('id', count='exact') \
-        .not_('embedding', 'is', 'null') \
+        .not_.is_('embedding', 'null') \
         .limit(1).execute()
     with_emb = embedded_result.count or 0
 
